@@ -108,7 +108,10 @@
          
 <%- contentFor('script') %>
 <script>
-    var socket = io.connect('localhost:8080');
+    // เปลี่ยนจากแบบเดิม
+    // var socket = io.connect('localhost:8080');
+    // เป็นแบบนี้
+    var socket = io(); // จะเชื่อมต่อกับ host ปัจจุบันอัตโนมัติ
 
     function displayPlayerStatus(online, offline) {
         $('.playerStatus').html('');
