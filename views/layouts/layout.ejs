@@ -30,11 +30,84 @@
             <%-defineContent('footer')%>
         </footer>
 
+        <!-- Audio Player และ Controls -->
+        <audio id="background-music" src="/static/sound/bgm.mp3" loop></audio>
+        <div id="music-controls" style="position: fixed; top: 15px; right: 15px; z-index: 10001; background: rgba(255,255,255,0.7); border-radius: 5px; padding: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">
+            <img id="music-toggle-btn" src="/static/image/song.png" alt="Music Toggle" style="width: 30px; height: 30px; cursor: pointer; display: block;">
+        </div>
+
         <!-- Javascript -->
         <script src="//code.jquery.com/jquery-1.10.2.js"></script>
         <script src="/socket.io/socket.io.js"></script>
         <script src="static/js/timer.js"></script>
     
+        <script>
+            // filepath: c:\Users\pc\Desktop\insider-game-master\views\layouts\layout.ejs
+            // ฟังก์ชันนี้จำเป็นสำหรับ board.ejs และต้องเป็น global
+            function formatCountdown(seconds) {
+                const minutes = Math.floor(seconds / 60);
+                const remainingSeconds = seconds % 60;
+                return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+            }
+
+            $(document).ready(function() {
+                const audio = $('#background-music')[0];
+                const musicToggleButton = $('#music-toggle-btn');
+                const playIcon = '/static/image/song.png';
+                const muteIcon = '/static/image/mute.png';
+
+                // ตรวจสอบสถานะ mute ที่บันทึกไว้ใน localStorage
+                let isMuted = localStorage.getItem('isMusicMuted') === 'true';
+
+                // กำหนดสถานะเริ่มต้น
+                if (isMuted) {
+                    audio.muted = true;
+                    musicToggleButton.attr('src', muteIcon);
+                } else {
+                    audio.muted = false;
+                    musicToggleButton.attr('src', playIcon);
+                    // พยายามเล่นเพลงอัตโนมัติ แต่เบราว์เซอร์อาจบล็อก
+                    // เราจะใช้การคลิกครั้งแรกของผู้ใช้เพื่อเริ่มเล่นหากถูกบล็อก
+                    audio.play().catch(e => {
+                        console.log("Autoplay was prevented:", e);
+                        // ถ้า autoplay ถูกบล็อก ให้แสดงไอคอนเล่นเพลงไว้ ผู้ใช้จะต้องคลิกเอง
+                        musicToggleButton.attr('src', playIcon);
+                    });
+                }
+
+                // สลับสถานะเพลงเมื่อคลิกปุ่ม
+                musicToggleButton.on('click', function() {
+                    if (audio.muted) {
+                        audio.muted = false;
+                        isMuted = false;
+                        // พยายามเล่นเพลงเฉพาะเมื่อเพลงหยุดอยู่ (เพื่อจัดการกับ autoplay ที่ถูกบล็อกในตอนแรก)
+                        if (audio.paused) {
+                            audio.play().catch(e => {
+                                console.log("Play after user click was prevented:", e);
+                                isMuted = true; // เปลี่ยนสถานะกลับถ้ายังถูกบล็อก
+                                audio.muted = true; // ยังคง mute ไว้
+                                musicToggleButton.attr('src', muteIcon);
+                            });
+                        }
+                        musicToggleButton.attr('src', playIcon);
+                    } else {
+                        audio.muted = true;
+                        isMuted = true;
+                        musicToggleButton.attr('src', muteIcon);
+                    }
+                    localStorage.setItem('isMusicMuted', isMuted);
+                });
+
+                // แก้ไขปัญหา autoplay ที่เข้มงวด:
+                // หากเพลงควรจะเล่นแต่ไม่ได้เล่น (เช่น เพราะนโยบาย autoplay)
+                // ให้ลองเล่นเมื่อมีการโต้ตอบของผู้ใช้ครั้งแรกบนหน้าใดๆ
+                $(document).one('click', function() {
+                    if (!audio.muted && audio.paused && localStorage.getItem('isMusicMuted') !== 'true') {
+                        audio.play().catch(e => console.log("First user interaction play prevented:", e));
+                    }
+                });
+            });
+        </script>
         <%-defineContent('script')%>
     </body>
 </html>
