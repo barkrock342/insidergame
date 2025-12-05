@@ -5,6 +5,14 @@
     <span class="homelink">ถ้าไม่ใช่คุณ, <a href="/">คลิกที่นี่</a> !</span>
 </div>
 
+<!-- เพิ่มส่วนสำหรับแสดงรายชื่อผู้เล่นที่ออนไลน์ -->
+<div id="onlinePlayers" style="margin-top: 20px; padding: 10px; border: 1px solid #070606; border-radius: 5px; background-color: #777070;">
+    <h4>ผู้เล่นที่ออนไลน์:</h4>
+    <ul id="onlinePlayerList" style="list-style-type: none; padding: 0;">
+        <!-- รายชื่อผู้เล่นจะถูกแทรกโดย JavaScript -->
+    </ul>
+</div>
+
 <div id="waiting" class="hidden <% if (status === '') { %>current<% } %>">
     <p>รอให้ทุกคนพร้อม ...</p>
 </div>
@@ -108,9 +116,6 @@
          
 <%- contentFor('script') %>
 <script>
-    // เปลี่ยนจากแบบเดิม
-    // var socket = io.connect('localhost:8080');
-    // เป็นแบบนี้
     var socket = io(); // จะเชื่อมต่อกับ host ปัจจุบันอัตโนมัติ
 
     function displayPlayerStatus(online, offline) {
@@ -121,6 +126,14 @@
         for (var i = 0; i < offline; i++) {
             $('.playerStatus').append('<i class="fas fa-circle offline"></i>')
         }
+    }
+
+    // ฟังก์ชันสำหรับอัปเดตรายชื่อผู้เล่นที่ออนไลน์
+    function updateOnlinePlayerList(onlinePlayers) {
+        $('#onlinePlayerList').empty();
+        onlinePlayers.forEach(function(playerName) {
+            $('#onlinePlayerList').append('<li><i class="fas fa-circle online"></i> ' + playerName + '</li>');
+        });
     }
     
     $(function() {
@@ -182,20 +195,23 @@
     }
 
     function getResultIssue(result) {
-        let traitors = '';
-        if (result.voteDetail && result.voteDetail.length > 0) {
-            const traitorPlayers = result.voteDetail.filter(p => p.role === 'ผู้ทรยศ');
-            if (traitorPlayers.length > 0) {
-                traitors = '<br/>ผู้ทรยศคือ: ' + traitorPlayers.map(p => p.name).join(', ');
+        let message = '';
+        if (result.hasTraitor) {
+            // กรณีมีผู้ทรยศในเกม
+            if (result.hasWon) {
+                message = `เยี่ยมมาก! พลเมืองชนะแล้ว! <br/>ผู้ทรยศคือ: ${result.finalTraitorName}`;
+            } else {
+                message = `ผู้ทรยศชนะ! พลเมืองโหวตพลาด <br/>ผู้ทรยศคือ: ${result.finalTraitorName}`;
+            }
+        } else {
+            // กรณีไม่มีผู้ทรยศในเกม
+            if (result.hasWon) {
+                message = `เยี่ยมมาก! พลเมืองชนะแล้ว! <br/>ไม่มีผู้ทรยศในเกมนี้ (เจอ Ghost Player)`;
+            } else {
+                message = `พลเมืองโหวตพลาด! ไม่มีผู้ทรยศในเกมนี้ แต่คุณก็ยังโหวตพลาด`;
             }
         }
-        if(result.hasWon) {
-            return 'เยี่ยมมาก! <br/>คุณชนะแล้ว!' + traitors;
-        } else if(result.hasTraitor) {
-            return 'ผู้ทรยศชนะ!' + traitors;
-        } else {
-            return 'แพ้ เพราะไม่มีผู้ทรยศ!';
-        }
+        return message;
     }
 
     $(function() {
@@ -260,8 +276,27 @@
         socket.emit('newPlayer', '<%= player.name %>');
 
         socket.on('reconnect', function(data) {
-            socket.emit('Reconnect', '<%= player.name %>');
-        })
+            socket.emit('newPlayer', '<%= player.name %>'); // ส่ง newPlayer อีกครั้งเมื่อ reconnect
+        });
+
+        // รับข้อมูลรายชื่อผู้เล่นที่ออนไลน์จาก Server
+        socket.on('onlinePlayerListUpdate', function(onlinePlayers) {
+            updateOnlinePlayerList(onlinePlayers);
+        });
+
+        // จัดการกรณีที่ชื่อถูกใช้งานอยู่
+        socket.on('nameInUse', function(data) {
+            Swal.fire({
+                icon: 'error',
+                title: 'ชื่อถูกใช้งานแล้ว!',
+                text: data.message,
+                confirmButtonText: 'ตกลง'
+            }).then((result) => {
+                if (result.isConfirmed) {
+                    window.location.href = '/'; // Redirect กลับไปหน้าเลือกผู้เล่น
+                }
+            });
+        });
 
         socket.on('newRole', function(data) {
             $('.hidden').hide();
@@ -273,7 +308,8 @@
                 if(obj.name == '<%= player.name %>') {
                     $('.role strong').html(obj.role);
                     $('#reset .role').fadeIn(1000).delay(6000).fadeOut("slow", function(){
-                        if(obj.role == 'ผู้ดำเนินเกม') {
+                        // ตรวจสอบบทบาทจริง ไม่ใช่ 'Maître du jeu' ที่เป็นภาษาฝรั่งเศส
+                        if(obj.role === 'ผู้ดำเนินเกม') { 
                             $("#chooseWord").fadeIn();
                         }
                     });

@@ -1,25 +1,27 @@
 <%- contentFor('content') %>
 <h2>คุณคือใคร?</h2>
-<span class="homelink">แก้ไขรายชื่อผู้เล่น, <a href="/adminPlayer">คลิกที่กูนี่</a> !</span>
+<span class="homelink">แก้ไขรายชื่อผู้เล่น, <a href="/adminPlayer">คลิกที่นี่</a> !</span>
 
 <form class="inline-block" id="playerChoiceForm" method="post" name="playerForm" action="game">
-    <% players.forEach(function(player, index) { %>
-        <% if(!player.isGhost) { %>
-          <div class="form__group">
-              <div class="form__radio-group">
-                <input <% if(index == 0) { %>checked<% } %> type="radio" class="form__radio-input" id="<%= player.name %>" name="player" value="<%= player.name %>" />
-                <label for="<%= player.name %>" class="form__radio-label">
-                  <%= player.name %>
-                </label>
-              </div>
-          </div>
-        <% } %>
-    <% }); %>
+    <% if (players.length === 0) { %>
+        <p>ไม่มีผู้เล่นให้เลือก กรุณาสร้างผู้เล่นใหม่ในหน้า <a href="/adminPlayer">Admin Player</a></p>
+    <% } else { %>
+        <% players.forEach(function(player, index) { %>
+            <div class="form__group">
+                <div class="form__radio-group">
+                    <input <% if(index == 0) { %>checked<% } %> type="radio" class="form__radio-input" id="<%= player.name %>" name="player" value="<%= player.name %>" />
+                    <label for="<%= player.name %>" class="form__radio-label">
+                        <%= player.name %>
+                    </label>
+                </div>
+            </div>
+        <% }); %>
+    <% } %>
 </form>
 
 <%- contentFor('footer') %> 
 <div class="container">
-  <button class="btn btn-dark cta" id="newGame">เริ่มเกม</button>
+  <button class="btn btn-dark cta" id="newGame" <% if (players.length === 0) { %>disabled<% } %>>เริ่มเกม</button>
 </div>
 
 <%- contentFor('script') %>
@@ -27,6 +29,22 @@
 $(function() {
     $( "#newGame").click(function(){
         $('.content form').submit();
+    });
+
+    // เพิ่ม Socket.IO สำหรับรับแจ้งเตือนชื่อซ้ำ
+    var socket = io();
+
+    socket.on('nameInUse', function(data) {
+        Swal.fire({
+            icon: 'error',
+            title: 'ชื่อถูกใช้งานแล้ว!',
+            text: data.message,
+            confirmButtonText: 'ตกลง'
+        }).then((result) => {
+            if (result.isConfirmed) {
+                window.location.href = '/'; // กลับไปหน้าเลือกผู้เล่น
+            }
+        });
     });
 });
 </script>

@@ -22,6 +22,9 @@ const fs = require('fs'),
       traitorRole = 'ผู้ทรยศ',
       defaultRole = 'พลเมือง';
 
+// เพิ่ม Set สำหรับเก็บชื่อผู้เล่นที่กำลังออนไลน์อยู่
+const currentlyActivePlayerNames = new Set();
+
 app.use(function(req, res, next){
     if (typeof(game) == 'undefined') {
         game = {
@@ -51,7 +54,11 @@ app.use(function(req, res, next){
 .set('layout', 'layouts/layout')
 
 .get('/', function (req, res) {
-    res.render('welcome.ejs', {players: game.players.filter((player) => !isGhostPlayer(player))});
+    // กรองผู้เล่นที่กำลังออนไลน์ออกไป
+    const availablePlayers = game.players.filter((player) => 
+        !isGhostPlayer(player) && !currentlyActivePlayerNames.has(player.name)
+    );
+    res.render('welcome.ejs', {players: availablePlayers});
 })
 
 .get('/adminPlayer', function (req, res) {
@@ -65,9 +72,19 @@ app.use(function(req, res, next){
     res.redirect('/adminPlayer');
 })
 
+// เพิ่ม route สำหรับบันทึกการตั้งค่าเกม (traitorOptional)
+.post('/setGameSettings', function (req, res) {
+    game.settings.traitorOptional = (req.body.traitorOptional === 'on');
+    res.redirect('/adminPlayer');
+})
+
 .get('/deletePlayer', function (req, res) {
     game.players.forEach(function(playerItem, index) {
         if(playerItem.name == req.query.player) {
+            // หากผู้เล่นที่ถูกลบกำลังออนไลน์อยู่ ให้ลบออกจาก Set ด้วย
+            if (currentlyActivePlayerNames.has(playerItem.name)) {
+                currentlyActivePlayerNames.delete(playerItem.name);
+            }
             game.players.splice(index, 1);
         }
     });
@@ -107,13 +124,13 @@ app.use(function(req, res, next){
 })
 
 function resetGame() {
-    removeGhostPlayer();
-
+    // ต้องรีเซ็ต isGhost ด้วย
     game.players.forEach(function(player, index) {
         player.role = defaultRole;
         player.vote1 = null;
         player.vote2 = null;
         player.nbVote2 = 0;
+        player.isGhost = false; // เพิ่มบรรทัดนี้
     });
 
     game.word = '';
@@ -124,17 +141,32 @@ function resetGame() {
 }
 
 function randomRoles(players) {
-    resetGame();
+    resetGame(); // เรียกใช้ resetGame() เพื่อรีเซ็ต isGhost ด้วย
 
     players = shuffle(players);
     // สุ่มผู้ดำเนินเกม
     const gmIndex = Math.floor(Math.random() * players.length);
     players[gmIndex].role = gameMasterRole;
 
-    players = addGhostPlayer();
-    players = shuffle(players);
+    // ตรวจสอบการตั้งค่า traitorOptional
+    let hasTraitor = true;
+    if (game.settings.traitorOptional) {
+        // มีโอกาส 30% ที่จะไม่มีผู้ทรยศ (สามารถปรับเปอร์เซ็นต์ได้)
+        if (Math.random() < 0.3) { 
+            hasTraitor = false;
+        }
+    }
 
-    setRole(traitorRole);
+    if (hasTraitor) {
+        setRole(traitorRole);
+    } else {
+        // ถ้าไม่มีผู้ทรยศ, ให้เลือกผู้เล่นคนหนึ่งเป็น "Ghost" แทน
+        // คนนี้จะไม่มีบทบาทผู้ทรยศ แต่จะถูกนับเป็น "ไม่มีผู้ทรยศ" ในผลโหวต
+        addGhostPlayerToGame(players);
+    }
+
+    // shuffle อีกครั้งเพื่อไม่ให้ตำแหน่งบทบาทเดาได้ง่าย
+    players = shuffle(players);
 
     players.sort(comparePlayer);
     return players;
@@ -175,13 +207,24 @@ function shuffle(players) {
     return players;
 }
 
-function addGhostPlayer() {
-    // ไม่เพิ่มผู้เล่น 'ไม่มีผู้ทรยศ' อีกต่อไป
-    return game.players;
+// ฟังก์ชันใหม่สำหรับเพิ่ม Ghost Player เมื่อไม่มีผู้ทรยศ
+function addGhostPlayerToGame(players) {
+    // เลือกผู้เล่นที่ยังเป็น defaultRole เพื่อเป็น Ghost Player
+    const defaultPlayers = players.filter(player => player.role === defaultRole);
+    if (defaultPlayers.length > 0) {
+        const ghostIndex = players.indexOf(defaultPlayers[Math.floor(Math.random() * defaultPlayers.length)]);
+        players[ghostIndex].isGhost = true;
+        // ไม่ต้องกำหนด role พิเศษ แค่ isGhost: true ก็พอ
+        console.log(`No Traitor in this game. ${players[ghostIndex].name} is the Ghost Player.`);
+    }
+    return players;
 }
 
+// removeGhostPlayer เดิม (ในไฟล์เดิมมีการกรองผู้เล่น isGhost: true ออก)
+// แต่ถ้าเราจัดการ isGhost: true ใน randomRoles() แล้ว ก็ไม่จำเป็นต้อง remove อีก
+// แต่จะเก็บไว้เผื่อกรณีต้องการรีเซ็ตผู้เล่นผี
 function removeGhostPlayer() {
-    game.players = game.players.filter((player) => !isGhostPlayer(player) );
+    game.players = game.players.filter((player) => !player.isGhost ); 
 }
 
 function getGhostPlayer() {
@@ -195,6 +238,7 @@ function getWord(data) {
 }
 
 function everybodyHasVoted(voteNumber) {
+    // ผู้เล่น Ghost ไม่ต้องโหวต (เดิมก็เป็นแบบนี้แล้ว)
     const hasVoted1 = (currentValue) => currentValue.isGhost || currentValue.vote1 !== null;
     const hasVoted2 = (currentValue) => currentValue.isGhost || currentValue.vote2 !== null;
 
@@ -244,7 +288,7 @@ function processVote1Result() {
     game.players.some(function(player) {
       if(player.vote1 == '1') {
         voteResult.up += 1;
-      } else if(!isGhostPlayer(player)) {
+      } else if(!isGhostPlayer(player)) { // ผู้เล่น Ghost ไม่นับเป็น down vote
         voteResult.down += 1;
       }
     })
@@ -258,11 +302,48 @@ function processVote2Result() {
     });
     votePlayers = game.players.filter(isNotGameMaster);
     votePlayers.sort(compareVote);
-    hasWon = votePlayers[0].role === traitorRole && votePlayers[1].nbVote2 < votePlayers[0].nbVote2;
-    ghostPlayers = game.players.filter(isGhostPlayer);
-    ghostPlayer = ghostPlayers.length > 0 ? ghostPlayers[0]: null;
 
-    game.resultVote2 = { hasWon: hasWon, voteDetail: votePlayers, hasTraitor: (!ghostPlayer || ghostPlayer.role !== traitorRole) };
+    // ตรวจสอบว่ามีผู้ทรยศในเกมจริงๆ หรือไม่
+    const actualTraitor = game.players.find(p => p.role === traitorRole);
+    let hasTraitorInGame = !!actualTraitor;
+
+    let hasWon;
+    let finalResultTraitorName = '';
+    const topVotedPlayer = votePlayers[0];
+    const secondVotedPlayer = votePlayers[1];
+
+    if (hasTraitorInGame) {
+        // กรณีมีผู้ทรยศจริง
+        // พลเมืองชนะถ้าโหวตผู้ทรยศถูกคนและผู้ทรยศได้คะแนนโหวตสูงสุดคนเดียว
+        if (topVotedPlayer && topVotedPlayer.role === traitorRole && (secondVotedPlayer ? topVotedPlayer.nbVote2 > secondVotedPlayer.nbVote2 : true)) {
+            hasWon = true; // พลเมืองชนะ
+            finalResultTraitorName = topVotedPlayer.name;
+        } else {
+            hasWon = false; // ผู้ทรยศชนะ (พลเมืองโหวตผิด)
+            finalResultTraitorName = actualTraitor.name; // แสดงชื่อผู้ทรยศที่แท้จริง
+        }
+    } else {
+        // กรณีไม่มีผู้ทรยศ (มี Ghost Player)
+        // พลเมืองชนะถ้าโหวต Ghost Player ได้คะแนนสูงสุด
+        // หรือถ้าไม่มีผู้เล่นคนใดได้คะแนนโหวต (แสดงว่าไม่เจอใคร)
+        if (topVotedPlayer && topVotedPlayer.isGhost && (secondVotedPlayer ? topVotedPlayer.nbVote2 > secondVotedPlayer.nbVote2 : true)) {
+            hasWon = true; // พลเมืองชนะ (โหวตเจอ Ghost Player)
+            finalResultTraitorName = topVotedPlayer.name + ' (ไม่มีผู้ทรยศ)';
+        } else if (!topVotedPlayer || (topVotedPlayer && !topVotedPlayer.isGhost && topVotedPlayer.nbVote2 === 0)) {
+             hasWon = true; // พลเมืองชนะ (ไม่เจอผู้ทรยศ หรือโหวตผิดคน แต่ไม่มีผู้ทรยศจริง)
+             finalResultTraitorName = 'ไม่มีผู้ทรยศ';
+        } else {
+            hasWon = false; // ผู้ทรยศชนะ (พลเมืองโหวตผิด)
+            finalResultTraitorName = 'ไม่มีผู้ทรยศ (แต่ผู้เล่นโหวตพลาด)'; // ผู้ทรยศชนะจริงๆ คือไม่มีใครเลย 
+        }
+    }
+
+    game.resultVote2 = { 
+        hasWon: hasWon, 
+        voteDetail: votePlayers, 
+        hasTraitor: hasTraitorInGame,
+        finalTraitorName: finalResultTraitorName // เพิ่มชื่อผู้ทรยศ/Ghost Player เพื่อแสดงผล
+    };
 }
  
 // On enclenche le socket d'échange
@@ -279,20 +360,41 @@ io.sockets.on('connection', function (socket) {
  
     socket.join('game');
 
-    socket.on('newPlayer', function(data1) {
-        game.online = game.online + 1;
+    socket.on('newPlayer', function(playerName) {
+        // ตรวจสอบว่าชื่อผู้เล่นนี้ถูกใช้งานอยู่แล้วหรือไม่
+        if (currentlyActivePlayerNames.has(playerName)) {
+            console.log(`ชื่อผู้เล่น "${playerName}" ถูกใช้งานอยู่แล้ว`);
+            io.to(socket.id).emit('nameInUse', { message: `ชื่อ "${playerName}" ถูกใช้งานอยู่แล้ว กรุณาเลือกชื่ออื่น` });
+            return; // หยุดการทำงานของ event นี้
+        }
+
+        // หากชื่อยังไม่ถูกใช้งาน
+        currentlyActivePlayerNames.add(playerName);
+        socket.playerName = playerName; // เก็บชื่อผู้เล่นไว้ใน socket object สำหรับอ้างอิงภายหลัง
+
+        game.online = currentlyActivePlayerNames.size; // อัปเดตจำนวนผู้เล่นออนไลน์
         humanPlayers = game.players.filter((player) => !isGhostPlayer(player) );
         offline = humanPlayers.length - game.online;
         console.log('ผู้เล่นออนไลน์ : ' + game.online);
-        console.log('ผู้เล่นใหม่เชื่อมต่อ : ' + data1);
+        console.log('ผู้เล่นใหม่เชื่อมต่อ : ' + playerName);
+
+        // ส่งข้อมูลผู้เล่นที่ออนไลน์ทั้งหมดไปยังทุก client
+        io.in('game').emit('onlinePlayerListUpdate', Array.from(currentlyActivePlayerNames));
         io.in('game').emit('playerStatusUpdate', { online: game.online, offline: offline });
-      });
+    });
 
     socket.on('disconnect', function () {
       console.log('ผู้เล่นตัดการเชื่อมต่อ');
-      game.online = game.online > 0 ? game.online - 1 : 0;
+      if (socket.playerName) {
+          currentlyActivePlayerNames.delete(socket.playerName); // ลบชื่อผู้เล่นออกจาก Set
+      }
+
+      game.online = currentlyActivePlayerNames.size; // อัปเดตจำนวนผู้เล่นออนไลน์
       humanPlayers = game.players.filter((player) => !isGhostPlayer(player) );
       offline = humanPlayers.length - game.online;
+
+      // ส่งข้อมูลผู้เล่นที่ออนไลน์ทั้งหมดไปยังทุก client
+      io.in('game').emit('onlinePlayerListUpdate', Array.from(currentlyActivePlayerNames));
       io.in('game').emit('playerStatusUpdate', { online: game.online, offline: offline });
     });
     
