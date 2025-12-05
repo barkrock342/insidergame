@@ -13,7 +13,11 @@ const { Server } = require('socket.io');
 const io = new Server(server);
 
 const fs = require('fs'),
-      wordFamille = fs.readFileSync('words/famille.csv','utf8').split("\r\n"),
+      // แก้ไขการอ่านไฟล์คำศัพท์: แยกด้วย regex เพื่อรองรับ \r\n หรือ \n, trim แต่ละคำ และกรองคำว่างออก
+      wordFamille = fs.readFileSync('words/famille.csv','utf8')
+                      .split(/\r?\n/) // แยกด้วย \r\n หรือ \n
+                      .map(word => word.trim()) // ลบช่องว่างหัวท้าย
+                      .filter(word => word.length > 0), // กรองคำว่างออก
       gameMasterRole = 'ผู้ดำเนินเกม',
       traitorRole = 'ผู้ทรยศ',
       defaultRole = 'พลเมือง';
@@ -37,7 +41,7 @@ app.use(function(req, res, next){
 })
 
 .use(expressLayouts)
-.use(session({ secret: 'session-insider-secret', cookie: { maxAge: null }}))
+.use(session({ secret: process.env.SESSION_SECRET || 'session-insider-secret', cookie: { maxAge: null }}))
 .use('/static', express.static(__dirname + '/public'))
 .use(bodyParser.urlencoded({
    extended: true
