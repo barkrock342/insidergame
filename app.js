@@ -2,11 +2,15 @@ const express = require('express');
 const app = express();
 
 var server = require('http').createServer(app), // Serveur HTTP
-    io = require('socket.io').listen(server), // Socket.io pour le realtime
+    // io = require('socket.io').listen(server), // Socket.io pour le realtime
     ent = require('ent'), // Ent pour l'encodage
     session = require('express-session'),
     bodyParser = require('body-parser'),
     expressLayouts = require('express-ejs-layouts');
+
+// ใช้ socket.io v4 syntax
+const { Server } = require('socket.io');
+const io = new Server(server);
 
 const fs = require('fs'),
       wordFamille = fs.readFileSync('words/famille.csv','utf8').split("\r\n"),
