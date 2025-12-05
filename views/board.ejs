@@ -5,13 +5,24 @@
     <span class="homelink">ถ้าไม่ใช่คุณ, <a href="/">คลิกที่นี่</a> !</span>
 </div>
 
-<!-- เพิ่มส่วนสำหรับแสดงรายชื่อผู้เล่นที่ออนไลน์ -->
-<div id="onlinePlayers" style="margin-top: 20px; padding: 10px; border: 1px solid #070606; border-radius: 5px; background-color: #777070;">
-    <h4>ผู้เล่นที่ออนไลน์:</h4>
-    <ul id="onlinePlayerList" style="list-style-type: none; padding: 0;">
-        <!-- รายชื่อผู้เล่นจะถูกแทรกโดย JavaScript -->
-    </ul>
+<!-- ปุ่มสำหรับเปิด/ปิดแถบข้าง -->
+<button id="toggleSidebarBtn" class="btn btn-secondary">
+    <i class="fas fa-users"></i> ผู้เล่นออนไลน์
+</button>
+
+<!-- แถบข้างสำหรับแสดงรายชื่อผู้เล่นที่ออนไลน์ -->
+<div id="playerSidebar">
+    <div id="onlinePlayers">
+        <h4>ผู้เล่นที่ออนไลน์:</h4>
+        <ul id="onlinePlayerList">
+            <!-- รายชื่อผู้เล่นจะถูกแทรกโดย JavaScript -->
+        </ul>
+        <button id="closeSidebarBtn" class="btn btn-sm btn-danger mt-3">ปิด</button>
+    </div>
 </div>
+<!-- Overlay สำหรับเมื่อแถบข้างเปิดอยู่ -->
+<div id="sidebarOverlay"></div>
+
 
 <div id="waiting" class="hidden <% if (status === '') { %>current<% } %>">
     <p>รอให้ทุกคนพร้อม ...</p>
@@ -115,10 +126,132 @@
 <% } %>
          
 <%- contentFor('script') %>
+<style>
+    /* filepath: c:\Users\pc\Desktop\insider-game-master\views\board.ejs */
+    /* CSS สำหรับแถบข้างผู้เล่น */
+    #playerSidebar {
+        position: fixed;
+        top: 0;
+        right: -250px; /* เริ่มต้นซ่อนอยู่ด้านขวา */
+        width: 250px;
+        height: 100%;
+        background-color: #777070; /* สีเทาเข้ม */
+        color: #fff;
+        padding: 15px;
+        box-shadow: -3px 0 10px rgba(0,0,0,0.2);
+        z-index: 10002; /* ต้องสูงกว่า overlay */
+        transition: right 0.3s ease-in-out; /* เพิ่ม animation */
+        overflow-y: auto; /* ทำให้สามารถ scroll ได้ถ้ามีผู้เล่นเยอะ */
+    }
+
+    #playerSidebar.open {
+        right: 0; /* เลื่อนเข้ามาในจอ */
+    }
+
+    #onlinePlayers {
+        /* ไม่ต้องมี margin-top, border, background-color ซ้ำซ้อนแล้ว */
+        padding: 0; 
+    }
+
+    #onlinePlayers h4 {
+        color: #fff; /* หัวข้อก็เป็นสีขาว */
+        margin-bottom: 15px;
+    }
+
+    #onlinePlayerList {
+        list-style-type: none;
+        padding: 0;
+        margin-bottom: 20px;
+    }
+
+    #onlinePlayerList li {
+        margin-bottom: 8px;
+        font-size: 1em;
+        display: flex;
+        align-items: center;
+    }
+
+    #onlinePlayerList li i {
+        margin-right: 8px;
+        font-size: 0.8em;
+    }
+
+    .status-online {
+        color: #28a745; /* สีเขียวสำหรับออนไลน์ */
+    }
+
+    .status-disconnected {
+        color: #ffc107; /* สีเหลืองสำหรับหลุดการเชื่อมต่อ */
+    }
+
+    /* CSS สำหรับปุ่มเปิด/ปิดแถบข้าง */
+    #toggleSidebarBtn {
+        position: fixed;
+        top: 15px;
+        right: 15px;
+        z-index: 10001; /* อยู่ระหว่างเนื้อหากับ sidebar */
+        background-color: #343a40; /* สีเข้มเพื่อให้ตัดกับพื้นหลัง */
+        color: #fff;
+        border: none;
+        padding: 8px 12px;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 0.9em;
+    }
+
+    #toggleSidebarBtn i {
+        margin-right: 5px;
+    }
+
+    /* CSS สำหรับ Overlay */
+    #sidebarOverlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0,0,0,0.5); /* พื้นหลังสีดำโปร่งใส */
+        z-index: 10000; /* อยู่ใต้ sidebar แต่เหนือกเนื้อหา */
+        display: none; /* เริ่มต้นซ่อนอยู่ */
+    }
+
+    /* ปรับแต่งสำหรับมือถือ (ปรับขนาดปุ่ม, แถบข้างอาจเต็มจอได้) */
+    @media (max-width: 768px) {
+        #playerSidebar {
+            width: 80%; /* บนมือถืออาจจะกว้างขึ้น */
+            right: -80%;
+            padding: 10px;
+        }
+
+        #playerSidebar.open {
+            right: 0;
+        }
+
+        #toggleSidebarBtn {
+            top: 10px;
+            right: 10px;
+            padding: 6px 10px;
+            font-size: 0.8em;
+        }
+
+        #onlinePlayerList li {
+            font-size: 0.9em;
+        }
+    }
+</style>
 <script>
     var socket = io(); // จะเชื่อมต่อกับ host ปัจจุบันอัตโนมัติ
 
+    // ฟังก์ชันสำหรับเปิด/ปิดแถบข้าง
+    function toggleSidebar() {
+        $('#playerSidebar').toggleClass('open');
+        $('#sidebarOverlay').toggle(); // สลับการแสดงผลของ overlay
+    }
+
     function displayPlayerStatus(online, offline) {
+        // ฟังก์ชันนี้ถูกใช้เพื่อแสดงวงกลมสถานะ online/offline ด้านบน
+        // การอัปเดตรายชื่อผู้เล่นด้านล่างจะใช้ updateOnlinePlayerList แทน
+        // ถ้าไม่ต้องการวงกลมด้านบนแล้ว สามารถลบโค้ดส่วนนี้ออกได้
         $('.playerStatus').html('');
         for (var i = 0; i < online; i++) {
             $('.playerStatus').append('<i class="fas fa-circle online"></i>')
@@ -129,14 +262,26 @@
     }
 
     // ฟังก์ชันสำหรับอัปเดตรายชื่อผู้เล่นที่ออนไลน์
+    // รับข้อมูลเป็น Array ของ object { name: string, status: 'online' | 'disconnected' }
     function updateOnlinePlayerList(onlinePlayers) {
         $('#onlinePlayerList').empty();
-        onlinePlayers.forEach(function(playerName) {
-            $('#onlinePlayerList').append('<li><i class="fas fa-circle online"></i> ' + playerName + '</li>');
-        });
+        if (onlinePlayers.length === 0) {
+            $('#onlinePlayerList').append('<li>ไม่มีผู้เล่นออนไลน์ในขณะนี้</li>');
+        } else {
+            onlinePlayers.forEach(function(player) {
+                const statusIconClass = player.status === 'online' ? 'status-online' : 'status-disconnected';
+                const statusText = player.status === 'online' ? '' : ' (หลุดการเชื่อมต่อ)';
+                $('#onlinePlayerList').append(`<li><i class="fas fa-circle ${statusIconClass}"></i> ${player.name}${statusText}</li>`);
+            });
+        }
     }
     
     $(function() {
+        // Event Listeners สำหรับแถบข้าง
+        $('#toggleSidebarBtn').on('click', toggleSidebar);
+        $('#closeSidebarBtn').on('click', toggleSidebar);
+        $('#sidebarOverlay').on('click', toggleSidebar); // คลิกที่ overlay เพื่อปิดแถบข้าง
+
         // ปุ่มแอดมินดูคำและบทบาท (footer)
         $(document).on('click', '#showWordAndRoles', function() {
             socket.emit('admin_request_word_roles');
@@ -273,10 +418,13 @@
             $(this).attr("disabled", true).hide();
         });
 
+        // ส่ง newPlayer เมื่อโหลดหน้าครั้งแรก
         socket.emit('newPlayer', '<%= player.name %>');
 
-        socket.on('reconnect', function(data) {
-            socket.emit('newPlayer', '<%= player.name %>'); // ส่ง newPlayer อีกครั้งเมื่อ reconnect
+        // เมื่อ Socket.IO reconnect อัตโนมัติ, ให้ส่ง newPlayer event อีกครั้งเพื่อ rejoin
+        socket.on('reconnect', function() {
+            console.log('Socket reconnected, attempting to rejoin as <%= player.name %>');
+            socket.emit('newPlayer', '<%= player.name %>'); 
         });
 
         // รับข้อมูลรายชื่อผู้เล่นที่ออนไลน์จาก Server

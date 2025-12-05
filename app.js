@@ -23,7 +23,11 @@ const fs = require('fs'),
       defaultRole = 'พลเมือง';
 
 // เพิ่ม Set สำหรับเก็บชื่อผู้เล่นที่กำลังออนไลน์อยู่
-const currentlyActivePlayerNames = new Set();
+// เปลี่ยนเป็น Map เพื่อเก็บข้อมูล socketID, สถานะ, และ timeout สำหรับการ rejoin
+const currentlyActivePlayers = new Map(); // Key: playerName, Value: { socketId: string, status: 'online' | 'disconnected', disconnectTimeout: Timeout }
+
+// กำหนดเวลาที่อนุญาตให้ rejoin (เช่น 60 วินาที)
+const REJOIN_TIMEOUT_SECONDS = 60;
 
 app.use(function(req, res, next){
     if (typeof(game) == 'undefined') {
@@ -54,9 +58,10 @@ app.use(function(req, res, next){
 .set('layout', 'layouts/layout')
 
 .get('/', function (req, res) {
-    // กรองผู้เล่นที่กำลังออนไลน์ออกไป
+    // กรองผู้เล่นที่กำลังออนไลน์ (status: 'online') ออกไป
     const availablePlayers = game.players.filter((player) => 
-        !isGhostPlayer(player) && !currentlyActivePlayerNames.has(player.name)
+        !isGhostPlayer(player) && 
+        (!currentlyActivePlayers.has(player.name) || currentlyActivePlayers.get(player.name).status === 'disconnected')
     );
     res.render('welcome.ejs', {players: availablePlayers});
 })
@@ -81,9 +86,13 @@ app.use(function(req, res, next){
 .get('/deletePlayer', function (req, res) {
     game.players.forEach(function(playerItem, index) {
         if(playerItem.name == req.query.player) {
-            // หากผู้เล่นที่ถูกลบกำลังออนไลน์อยู่ ให้ลบออกจาก Set ด้วย
-            if (currentlyActivePlayerNames.has(playerItem.name)) {
-                currentlyActivePlayerNames.delete(playerItem.name);
+            // หากผู้เล่นที่ถูกลบกำลังออนไลน์อยู่ ให้ลบออกจาก Map ด้วย
+            if (currentlyActivePlayers.has(playerItem.name)) {
+                const playerInfo = currentlyActivePlayers.get(playerItem.name);
+                if (playerInfo.disconnectTimeout) {
+                    clearTimeout(playerInfo.disconnectTimeout); // เคลียร์ timeout ถ้ามี
+                }
+                currentlyActivePlayers.delete(playerItem.name);
             }
             game.players.splice(index, 1);
         }
@@ -360,42 +369,95 @@ io.sockets.on('connection', function (socket) {
  
     socket.join('game');
 
+    // ฟังก์ชันสำหรับส่งรายชื่อผู้เล่นที่ออนไลน์ไปยัง Client ทุกคน
+    function emitOnlinePlayerListUpdate() {
+        const onlinePlayersArray = Array.from(currentlyActivePlayers.values()).map(p => ({
+            name: p.playerName,
+            status: p.status
+        }));
+        io.in('game').emit('onlinePlayerListUpdate', onlinePlayersArray);
+    }
+
     socket.on('newPlayer', function(playerName) {
-        // ตรวจสอบว่าชื่อผู้เล่นนี้ถูกใช้งานอยู่แล้วหรือไม่
-        if (currentlyActivePlayerNames.has(playerName)) {
-            console.log(`ชื่อผู้เล่น "${playerName}" ถูกใช้งานอยู่แล้ว`);
-            io.to(socket.id).emit('nameInUse', { message: `ชื่อ "${playerName}" ถูกใช้งานอยู่แล้ว กรุณาเลือกชื่ออื่น` });
-            return; // หยุดการทำงานของ event นี้
+        // ตรวจสอบว่าชื่อผู้เล่นนี้อยู่ใน Map แล้วหรือไม่
+        const existingPlayer = currentlyActivePlayers.get(playerName);
+
+        if (existingPlayer) {
+            // ถ้าชื่อถูกใช้งานอยู่แล้ว (สถานะ online)
+            if (existingPlayer.status === 'online') {
+                console.log(`ชื่อผู้เล่น "${playerName}" ถูกใช้งานอยู่แล้ว`);
+                io.to(socket.id).emit('nameInUse', { message: `ชื่อ "${playerName}" ถูกใช้งานอยู่แล้ว กรุณาเลือกชื่ออื่น` });
+                return; // หยุดการทำงานของ event นี้
+            } 
+            // ถ้าชื่ออยู่ใน Map แต่สถานะเป็น 'disconnected' (พยายาม rejoin)
+            else if (existingPlayer.status === 'disconnected') {
+                console.log(`ผู้เล่น "${playerName}" กลับเข้าสู่เกม`);
+                clearTimeout(existingPlayer.disconnectTimeout); // เคลียร์ timeout เดิม
+                currentlyActivePlayers.set(playerName, { 
+                    ...existingPlayer, 
+                    socketId: socket.id, 
+                    status: 'online',
+                    disconnectTimeout: null // Reset timeout
+                });
+                socket.playerName = playerName; // เก็บชื่อผู้เล่นไว้ใน socket object
+                
+                // แจ้งเตือนสถานะผู้เล่น
+                game.online = Array.from(currentlyActivePlayers.values()).filter(p => p.status === 'online').length;
+                humanPlayers = game.players.filter((player) => !isGhostPlayer(player) );
+                offline = humanPlayers.length - game.online;
+                io.in('game').emit('playerStatusUpdate', { online: game.online, offline: offline });
+                emitOnlinePlayerListUpdate(); // อัปเดตรายชื่อผู้เล่นที่ออนไลน์/หลุด
+                return; // จบการทำงานของ event นี้
+            }
         }
 
-        // หากชื่อยังไม่ถูกใช้งาน
-        currentlyActivePlayerNames.add(playerName);
-        socket.playerName = playerName; // เก็บชื่อผู้เล่นไว้ใน socket object สำหรับอ้างอิงภายหลัง
+        // หากชื่อยังไม่ถูกใช้งาน หรือเป็นผู้เล่นใหม่ที่ไม่เคยเชื่อมต่อมาก่อน
+        console.log('ผู้เล่นใหม่เชื่อมต่อ : ' + playerName);
+        currentlyActivePlayers.set(playerName, { 
+            socketId: socket.id, 
+            playerName: playerName, 
+            status: 'online', 
+            disconnectTimeout: null 
+        });
+        socket.playerName = playerName; // เก็บชื่อผู้เล่นไว้ใน socket object
 
-        game.online = currentlyActivePlayerNames.size; // อัปเดตจำนวนผู้เล่นออนไลน์
+        game.online = Array.from(currentlyActivePlayers.values()).filter(p => p.status === 'online').length;
         humanPlayers = game.players.filter((player) => !isGhostPlayer(player) );
         offline = humanPlayers.length - game.online;
         console.log('ผู้เล่นออนไลน์ : ' + game.online);
-        console.log('ผู้เล่นใหม่เชื่อมต่อ : ' + playerName);
 
-        // ส่งข้อมูลผู้เล่นที่ออนไลน์ทั้งหมดไปยังทุก client
-        io.in('game').emit('onlinePlayerListUpdate', Array.from(currentlyActivePlayerNames));
+        emitOnlinePlayerListUpdate(); // ส่งข้อมูลผู้เล่นที่ออนไลน์ทั้งหมดไปยังทุก client
         io.in('game').emit('playerStatusUpdate', { online: game.online, offline: offline });
     });
 
     socket.on('disconnect', function () {
       console.log('ผู้เล่นตัดการเชื่อมต่อ');
       if (socket.playerName) {
-          currentlyActivePlayerNames.delete(socket.playerName); // ลบชื่อผู้เล่นออกจาก Set
+          const playerName = socket.playerName;
+          const playerInfo = currentlyActivePlayers.get(playerName);
+
+          if (playerInfo && playerInfo.status === 'online') {
+              console.log(`ผู้เล่น "${playerName}" หลุดการเชื่อมต่อ`);
+              // ทำเครื่องหมายว่าหลุดและตั้งเวลาสำหรับการลบออกจาก Map จริงๆ
+              playerInfo.status = 'disconnected';
+              playerInfo.disconnectTimeout = setTimeout(() => {
+                  console.log(`ผู้เล่น "${playerName}" ถูกลบออกจากเกมหลังจากหลุดการเชื่อมต่อเป็นเวลานาน`);
+                  currentlyActivePlayers.delete(playerName);
+                  game.online = Array.from(currentlyActivePlayers.values()).filter(p => p.status === 'online').length;
+                  humanPlayers = game.players.filter((player) => !isGhostPlayer(player) );
+                  offline = humanPlayers.length - game.online;
+                  io.in('game').emit('playerStatusUpdate', { online: game.online, offline: offline });
+                  emitOnlinePlayerListUpdate();
+              }, REJOIN_TIMEOUT_SECONDS * 1000); // แปลงเป็นมิลลิวินาที
+
+              game.online = Array.from(currentlyActivePlayers.values()).filter(p => p.status === 'online').length;
+              humanPlayers = game.players.filter((player) => !isGhostPlayer(player) );
+              offline = humanPlayers.length - game.online;
+
+              emitOnlinePlayerListUpdate(); // ส่งข้อมูลผู้เล่นที่ออนไลน์ทั้งหมดไปยังทุก client
+              io.in('game').emit('playerStatusUpdate', { online: game.online, offline: offline });
+          }
       }
-
-      game.online = currentlyActivePlayerNames.size; // อัปเดตจำนวนผู้เล่นออนไลน์
-      humanPlayers = game.players.filter((player) => !isGhostPlayer(player) );
-      offline = humanPlayers.length - game.online;
-
-      // ส่งข้อมูลผู้เล่นที่ออนไลน์ทั้งหมดไปยังทุก client
-      io.in('game').emit('onlinePlayerListUpdate', Array.from(currentlyActivePlayerNames));
-      io.in('game').emit('playerStatusUpdate', { online: game.online, offline: offline });
     });
     
     socket.on('resetGame', function (object) {
